@@ -5,8 +5,9 @@ let users = {};
 let t = 0;
 let message = "";
 let messageAlpha = 0;
+
 function setup() {
-  createCanvas(windowWidth, windowHeight);
+  createCanvas(min(windowWidth * 0.95, 1200), min(windowHeight * 0.9, 700));
   colorMode(HSB, 360, 100, 100, 100);
   noFill();
 
@@ -58,11 +59,11 @@ function draw() {
   }
 
   noStroke();
-  fill(0, 0, 100, 90);
-  textAlign(CENTER);
-  textSize(20);
-  text("Move the mouse quickly to disturb the system.", width / 2, height - 20);
-  noFill();
+fill(0, 0, 100, 90);
+textAlign(CENTER, CENTER);
+textSize(24);
+text("Move your mouse quickly.", width / 2, height - 40);
+noFill();
 
   t += 0.02;
 }
@@ -284,5 +285,5 @@ function showMessage(newMessage) {
 }
 
 function windowResized() {
-  resizeCanvas(windowWidth, windowHeight);
+  resizeCanvas(min(windowWidth * 0.95, 1200), min(windowHeight * 0.9, 700));
 }
