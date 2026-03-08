@@ -60,7 +60,7 @@ function draw() {
   noStroke();
   fill(0, 0, 100, 90);
   textAlign(CENTER);
-  textSize(12);
+  textSize(20);
   text("Move the mouse quickly to disturb the system.", width / 2, height - 20);
   noFill();
 
