@@ -5,9 +5,8 @@ let users = {};
 let t = 0;
 let message = "";
 let messageAlpha = 0;
-
 function setup() {
-  createCanvas(700, 450);
+  createCanvas(windowWidth, windowHeight);
   colorMode(HSB, 360, 100, 100, 100);
   noFill();
 
@@ -62,7 +61,7 @@ function draw() {
   fill(0, 0, 100, 90);
   textAlign(CENTER);
   textSize(12);
-  text("Move the mouse. Each presence changes the system differently.", width / 2, height - 20);
+  text("Move the mouse quickly to disturb the system.", width / 2, height - 20);
   noFill();
 
   t += 0.02;
@@ -282,4 +281,8 @@ function drawMessyTraceShape(user, localT, energy, isMe) {
 function showMessage(newMessage) {
   message = newMessage;
   messageAlpha = 100;
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
 }
