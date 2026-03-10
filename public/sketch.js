@@ -23,20 +23,21 @@ function setup() {
   });
 
   socket.on("userJoined", (data) => {
-    showMessage(data.phrase);
+    showMessage(data.phrase || "Player joined");
   });
 
   socket.on("userLeft", (data) => {
-    showMessage(data.phrase);
+    showMessage(data.phrase || "Player left");
   });
 }
 
 function draw() {
   background(0, 80, 25, 16);
 
+  // 鼠标数据给server
   if (socket && myId) {
     let speed = dist(mouseX, mouseY, pmouseX, pmouseY);
-    let myEnergy = speed * 0.012;
+    let myEnergy = speed * 0.05;
 
     socket.emit("mouseData", {
       x: mouseX,
@@ -45,60 +46,133 @@ function draw() {
     });
   }
 
+  // 画所有在线玩家
   for (let id in users) {
-    drawUserShape(users[id], id === myId);
+    drawPlayer(users[id], id === myId);
   }
 
-  if (messageAlpha > 0) {
-    noStroke();
-    fill(0, 0, 100, messageAlpha);
-    textAlign(CENTER, CENTER);
-    textSize(18);
-    text(message, width / 2, 34);
-    messageAlpha -= 1.5;
-  }
-
-  noStroke();
-fill(0, 0, 100, 90);
-textAlign(CENTER, CENTER);
-textSize(24);
-text("Move your mouse quickly.", width / 2, height - 40);
-noFill();
+  drawBottomInstruction();
+  drawTopMessage();
+  drawOnlineCount();
 
   t += 0.02;
 }
 
-function drawUserShape(user, isMe) {
+function drawPlayer(user, isMe) {
+  let dx = user.x - user.px;
+  let dy = user.y - user.py;
+  let speed = dist(user.x, user.y, user.px, user.py);
+
   let localT = t * user.breathSpeed + user.phase;
-  let energy = user.energy || 0;
+  let boostedEnergy = (user.energy || 0) * 3.5;
 
-  let baseCx = width / 2 + map(user.x, 0, width, -90, 90);
-  let baseCy = height / 2 + map(user.y, 0, height, -70, 70);
+  // 原始位置
+  let baseCx = width / 2 + map(user.x, 0, width, -260, 260);
+  let baseCy = height / 2 + map(user.y, 0, height, -180, 180);
 
-  // 进入动画进度：0~1
-  let appear = constrain((millis() - (user.joinedAt || millis())) / 1200, 0, 1);
-  let enter = applyEnterAnimation(user, appear, baseCx, baseCy);
+  //拉扯/挤压
+  let shifted = applyCollectiveForces(user, baseCx, baseCy);
+
+  let cx = shifted.x;
+  let cy = shifted.y;
+
+  let appear = constrain((millis() - user.startTime) / 1200, 0, 1);
+  let enter = applyEnterAnimation(user.enterAnim, appear, cx, cy);
 
   push();
   translate(enter.x, enter.y);
   rotate(enter.rot);
   scale(enter.scale);
 
-  if (user.type === 0) {
-    drawOrbitShape(user, localT, energy, isMe);
-  } else if (user.type === 1) {
-    drawHorizontalStretchShape(user, localT, energy, isMe);
-  } else if (user.type === 2) {
-    drawPetalShape(user, localT, energy, isMe);
+  let currentType = getMovementType(dx, dy, speed);
+
+  if (currentType === "horizontal") {
+    drawHorizontalShape(user, localT, boostedEnergy, isMe);
+  } else if (currentType === "vertical") {
+    drawVerticalShape(user, localT, boostedEnergy, isMe);
+  } else if (currentType === "diagonal1") {
+    rotate(PI / 4);
+    drawHorizontalShape(user, localT, boostedEnergy, isMe);
+  } else if (currentType === "diagonal2") {
+    rotate(-PI / 4);
+    drawHorizontalShape(user, localT, boostedEnergy, isMe);
+  } else if (currentType === "petal") {
+    drawPetalShape(user, localT, boostedEnergy, isMe);
     drawDroplets(user, localT, appear);
-  } else if (user.type === 3) {
-    drawMessyTraceShape(user, localT, energy, isMe);
+  } else if (currentType === "messy") {
+    drawMessyTraceShape(user, localT, boostedEnergy, isMe);
+  } else {
+    drawOrbitShape(user, localT, boostedEnergy, isMe);
   }
 
   pop();
 }
 
-function applyEnterAnimation(user, appear, cx, cy) {
+// 被拉扯/被挤的核心
+function applyCollectiveForces(user, baseCx, baseCy) {
+  let x = baseCx;
+  let y = baseCy;
+
+  let pullX = 0;
+  let pullY = 0;
+  let pushX = 0;
+  let pushY = 0;
+
+  let selfScreenX = baseCx;
+  let selfScreenY = baseCy;
+
+  let count = 0;
+
+  for (let id in users) {
+    let other = users[id];
+    if (other.id === user.id) continue;
+
+    let otherCx = width / 2 + map(other.x, 0, width, -260, 260);
+    let otherCy = height / 2 + map(other.y, 0, height, -180, 180);
+
+    let vx = otherCx - selfScreenX;
+    let vy = otherCy - selfScreenY;
+    let d = dist(selfScreenX, selfScreenY, otherCx, otherCy);
+
+    if (d < 0.001) continue;
+
+    // 轻微拉向群体中心
+    pullX += vx * 0.01;
+    pullY += vy * 0.01;
+
+    // 距离近的时候互相挤开
+    if (d < 220) {
+      let force = map(d, 0, 220, 18, 0);
+      pushX -= (vx / d) * force;
+      pushY -= (vy / d) * force;
+    }
+
+    count++;
+  }
+
+  // 合并效果
+  x += pullX + pushX;
+  y += pullY + pushY;
+
+  return { x, y };
+}
+
+function getMovementType(dx, dy, speed) {
+  let absDx = abs(dx);
+  let absDy = abs(dy);
+
+  // 更容易切换
+  if (speed > 12) return "messy";
+  if (absDx > absDy * 1.4) return "horizontal";
+  if (absDy > absDx * 1.4) return "vertical";
+  if (dx * dy > 0 && speed > 2) return "diagonal1";
+  if (dx * dy < 0 && speed > 2) return "diagonal2";
+  if (speed > 1) return "petal";
+
+  return "orbit";
+}
+
+function applyEnterAnimation(enterAnim, appear, cx, cy) {
   let eased = easeOutCubic(appear);
 
   let x = cx;
@@ -106,19 +180,15 @@ function applyEnterAnimation(user, appear, cx, cy) {
   let rot = 0;
   let scale = eased;
 
-  if (user.enterAnim === 0) {
-    // 从小到大绽开
+  if (enterAnim === 0) {
     scale = eased;
-  } else if (user.enterAnim === 1) {
-    // 横向滑入
+  } else if (enterAnim === 1) {
     x = lerp(cx - 120, cx, eased);
     scale = 0.4 + eased * 0.6;
-  } else if (user.enterAnim === 2) {
-    // 竖向滑入
+  } else if (enterAnim === 2) {
     y = lerp(cy - 100, cy, eased);
     scale = 0.4 + eased * 0.6;
-  } else if (user.enterAnim === 3) {
-    // 扭转进入
+  } else if (enterAnim === 3) {
     rot = lerp(-0.8, 0, eased);
     scale = 0.3 + eased * 0.7;
   }
@@ -130,21 +200,56 @@ function easeOutCubic(x) {
   return 1 - pow(1 - x, 3);
 }
 
-//
-// 1. 呼吸圆环型
-//
-function drawOrbitShape(user, localT, energy, isMe) {
-  let baseR = 75 + sin(localT) * 12 + energy * 35;
+function drawBottomInstruction() {
+  noStroke();
+  fill(0, 0, 100, 100);
+  textAlign(CENTER, CENTER);
+  textSize(20);
+  text("Move your mouse in different directions and speeds :3", width / 2, height - 40);
+  noFill();
+}
 
-  stroke(user.hue, 80, 95, isMe ? 95 : 72);
-  strokeWeight(isMe ? 2.4 : 1.8);
+function drawTopMessage() {
+  if (messageAlpha > 0) {
+    noStroke();
+    fill(0, 0, 100, messageAlpha);
+    textAlign(CENTER, CENTER);
+    textSize(18);
+    text(message, width / 2, 35);
+    messageAlpha -= 1.5;
+  }
+}
+
+// 新增：实时在线人数
+function drawOnlineCount() {
+  let count = Object.keys(users).length;
+
+  noStroke();
+  fill(0, 0, 100, 85);
+  textAlign(LEFT, TOP);
+  textSize(16);
+  text("Players online: " + count, 20, 20);
+  noFill();
+}
+
+function getDynamicStroke(user, energyValue, alphaValue = 90) {
+  let dynamicHue = (user.hueValue + sin(t * 1.5) * 120 + energyValue * 200) % 360;
+  stroke(dynamicHue, 90, 100, alphaValue);
+}
+
+// 1. orbit
+function drawOrbitShape(user, localT, energyValue, isMe) {
+  let baseR = 75 + sin(localT) * 12 + energyValue * 30;
+
+  getDynamicStroke(user, energyValue, isMe ? 95 : 75);
+  strokeWeight(isMe ? 3.5 : 3);
   noFill();
 
   beginShape();
   for (let angle = 0; angle < TWO_PI; angle += 0.08) {
     let n = noise(
-      cos(angle) * 0.8 + user.seed,
-      sin(angle) * 0.8 + user.seed,
+      cos(angle) * 0.8 + user.seedValue,
+      sin(angle) * 0.8 + user.seedValue,
       localT
     );
     let offset = map(n, 0, 1, -18, 18) * user.wobbleAmount;
@@ -157,51 +262,65 @@ function drawOrbitShape(user, localT, energy, isMe) {
   endShape(CLOSE);
 }
 
-//
-// 2. 横向拉伸型
-//
-function drawHorizontalStretchShape(user, localT, energy, isMe) {
-  let rx = (110 + sin(localT * 1.3) * 18 + energy * 55) * user.stretchX;
-  let ry = (24 + cos(localT) * 8 + energy * 10) * user.stretchY;
+// 2. horizontal
+function drawHorizontalShape(user, localT, energyValue, isMe) {
+  let rx = (120 + sin(localT * 1.3) * 18 + energyValue * 50) * 1.4;
+  let ry = (26 + cos(localT) * 6 + energyValue * 8) * 0.7;
 
-  stroke(user.hue, 80, 95, isMe ? 95 : 72);
-  strokeWeight(isMe ? 2.4 : 1.8);
+  getDynamicStroke(user, energyValue, isMe ? 95 : 75);
+  strokeWeight(isMe ? 3.5 : 3);
   noFill();
 
   beginShape();
   for (let angle = 0; angle < TWO_PI; angle += 0.08) {
-    let n = noise(
-      cos(angle) + user.seed,
-      sin(angle) + user.seed,
-      localT * 0.9
-    );
-    let offset = map(n, 0, 1, -20, 20) * user.wobbleAmount;
+    let n = noise(cos(angle) + user.seedValue, sin(angle) + user.seedValue, localT * 0.9);
+    let offset = map(n, 0, 1, -18, 18);
 
     let x = cos(angle) * (rx + offset);
-    let y = sin(angle) * (ry + offset * 0.18);
+    let y = sin(angle) * (ry + offset * 0.15);
 
     curveVertex(x, y);
   }
   endShape(CLOSE);
 }
 
-//
-// 3. 花瓣型
-//
-function drawPetalShape(user, localT, energy, isMe) {
-  let baseR = 68 + sin(localT) * 10 + energy * 25;
+// 3. vertical
+function drawVerticalShape(user, localT, energyValue, isMe) {
+  let rx = (26 + cos(localT) * 6 + energyValue * 8) * 0.7;
+  let ry = (120 + sin(localT * 1.3) * 18 + energyValue * 50) * 1.4;
 
-  stroke(user.hue, 80, 95, isMe ? 95 : 75);
-  strokeWeight(isMe ? 2.4 : 1.8);
+  getDynamicStroke(user, energyValue, isMe ? 95 : 75);
+  strokeWeight(isMe ? 3.5 : 3);
   noFill();
 
-  let petalCount = 4 + floor((user.seed % 3)); // 4~6
+  beginShape();
+  for (let angle = 0; angle < TWO_PI; angle += 0.08) {
+    let n = noise(cos(angle) + user.seedValue, sin(angle) + user.seedValue, localT * 0.9);
+    let offset = map(n, 0, 1, -18, 18);
+
+    let x = cos(angle) * (rx + offset * 0.15);
+    let y = sin(angle) * (ry + offset);
+
+    curveVertex(x, y);
+  }
+  endShape(CLOSE);
+}
+
+// 4. petal
+function drawPetalShape(user, localT, energyValue, isMe) {
+  let baseR = 68 + sin(localT) * 10 + energyValue * 20;
+
+  getDynamicStroke(user, energyValue, isMe ? 95 : 78);
+  strokeWeight(isMe ? 3.5 : 3);
+  noFill();
+
+  let petalCount = 4 + floor(user.seedValue % 3);
 
   beginShape();
   for (let angle = 0; angle < TWO_PI; angle += 0.06) {
     let petal = sin(angle * petalCount + localT) * (24 + user.wobbleAmount * 8);
     let wobble = map(
-      noise(cos(angle) + user.seed, sin(angle) + user.seed, localT),
+      noise(cos(angle) + user.seedValue, sin(angle) + user.seedValue, localT),
       0, 1, -10, 10
     );
 
@@ -215,19 +334,16 @@ function drawPetalShape(user, localT, energy, isMe) {
   endShape(CLOSE);
 }
 
-//
-// 花瓣周围的小水滴
-//
 function drawDroplets(user, localT, appear) {
-  stroke(user.hue, 70, 95, 55);
-  strokeWeight(1.5);
+  let dynamicHue = (user.hueValue + cos(t * 2) * 80) % 360;
+  stroke(dynamicHue, 80, 100, 60);
+  strokeWeight(1.8);
   noFill();
 
-  let count = user.dropletCount || 6;
   let outerR = 112 + sin(localT) * 10;
 
-  for (let i = 0; i < count; i++) {
-    let a = map(i, 0, count, 0, TWO_PI);
+  for (let i = 0; i < user.dropletCount; i++) {
+    let a = map(i, 0, user.dropletCount, 0, TWO_PI);
     let dx = cos(a) * outerR;
     let dy = sin(a) * outerR;
 
@@ -248,25 +364,23 @@ function drawSingleDroplet(s) {
   endShape(CLOSE);
 }
 
-//
-// 4. messy / unstable trace
-//
-function drawMessyTraceShape(user, localT, energy, isMe) {
-  stroke(user.hue, 80, 95, isMe ? 90 : 62);
-  strokeWeight(isMe ? 2.2 : 1.6);
+// 5. messy
+function drawMessyTraceShape(user, localT, energyValue, isMe) {
+  getDynamicStroke(user, energyValue, isMe ? 80 : 65);
+  strokeWeight(isMe ? 2.6 : 2.2);
   noFill();
 
-  let layers = 2 + floor((user.seed % 2)); // 2 or 3
+  let layers = 2 + floor(user.seedValue % 2);
 
   for (let layer = 0; layer < layers; layer++) {
     beginShape();
     for (let angle = 0; angle < TWO_PI; angle += 0.12) {
       let r =
         65 +
-        sin(angle * (2 + layer) + localT * 1.4) * (30 + energy * 25) +
+        sin(angle * (2 + layer) + localT * 1.4) * (30 + energyValue * 25) +
         noise(
-          user.seed + layer * 30 + cos(angle),
-          user.seed + layer * 30 + sin(angle),
+          user.seedValue + layer * 30 + cos(angle),
+          user.seedValue + layer * 30 + sin(angle),
           localT
         ) * (38 + user.wobbleAmount * 12);
 
